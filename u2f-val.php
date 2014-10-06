@@ -90,7 +90,6 @@ function has_devices($authData) {
 }
 
 function is_error($data) {
-  _log($data);
   return isset($data->{'errorCode'});
 }
 
@@ -184,6 +183,10 @@ function u2f_val_password_render() {
 
 function u2f_settings_section_callback() {
   $resp = json_decode(curl_send(''));
+  if($resp === NULL || !isset($resp->{'trustedFacets'})) {
+    $resp->{'errorCode'} = 0;
+    $resp->{'errorMessage'} = 'Invalid response from server';
+  }
   ?>
   The settings below are used to connect to and authenticate against the U2F validation server.
 
@@ -342,6 +345,10 @@ function u2f_login($user) {
 
   if(wp_check_password($_POST['pwd'], $user->data->user_pass, $user->ID) && !isset($_POST['u2f'])) {
     $authData = auth_begin($user->ID);
+    $error = json_decode($authData);
+    if(is_error($error)) {
+      return new WP_Error('u2f_error_'.$error->{'errorCode'}, 'The U2F validation server is unreachable.');
+    }
     global $u2f_transient;
     $u2f_transient = $authData;
     if(has_devices($authData)) {
