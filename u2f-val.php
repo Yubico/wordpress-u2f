@@ -1,7 +1,7 @@
 <?php
 /**
 * Plugin Name: U2F Wordpress
-* Plugin URI: http://mypluginuri.com/
+* Plugin URI: http://developers.yubico.com/
 * Description: Enables U2F authentication for Wordpress.
 * Version: 0.1
 * Author: Yubico
@@ -9,10 +9,10 @@
 * License: GPL12
 */
 
-function curl_begin($url) {
+function curl_begin($path) {
   $options = get_option('u2f_settings');
 
-  $ch = curl_init($options['endpoint'].$url);
+  $ch = curl_init($options['endpoint'].$path);
   //curl_setopt($ch, CURLOPT_FAILONERROR, 1);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
   curl_setopt($ch, CURLOPT_USERPWD, $options['username'].':'.$options['password']);
@@ -21,8 +21,29 @@ function curl_begin($url) {
   return $ch;
 }
 
-function curl_send($url, $data=null) {
-  $ch = curl_begin($url);
+function curl_complete($ch) {
+  $res = curl_exec($ch);
+  if($res === false) {
+    curl_close($ch);
+    return '{"errorCode": -1, "errorMessage": "Server unreachable"}';
+  }
+
+  $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+  if($status >= 400) {
+    $res = '{"errorCode": '.$status.'';
+    if($status == 401) {
+      $res .= ', "errorMessage": "Invalid credentials"';
+    } else if($status == 404) {
+      $res .= ', "errorMessage": "Resource not found"';
+    }
+    $res .= '}';
+  }
+  return $res;
+}
+
+function curl_send($path, $data=null) {
+  $ch = curl_begin($path);
   if($data) {
     curl_setopt($ch, CURLOPT_POST, 1);
     curl_setopt($ch, CURLOPT_HTTPHEADER, array(
@@ -31,17 +52,13 @@ function curl_send($url, $data=null) {
     );
     curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
   }
-  $res = curl_exec($ch);
-  curl_close($ch);
-  return $res;
+  return curl_complete($ch);
 }
 
-function curl_delete($url) {
-  $ch = curl_begin($url);
+function curl_delete($path) {
+  $ch = curl_begin($path);
   curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "DELETE");
-  $res = curl_exec($ch);
-  curl_close($ch);
-  return $res;
+  return curl_complete($ch);
 }
 
 function list_devices($username) {
@@ -72,6 +89,10 @@ function has_devices($authData) {
   return sizeof(json_decode($authData)->{'authenticateRequests'}) > 0;
 }
 
+function is_error($data) {
+  _log($data);
+  return isset($data->{'errorCode'});
+}
 
 if(!function_exists('_log')){
   function _log($message ) {
@@ -94,7 +115,7 @@ function u2f_add_admin_menu() {
 }
 
 function sanitize_u2f_settings($settings) {
-  if(substr($settings['endpoint'], -1) != '/') {
+  if(!empty($settings['endpoint']) && substr($settings['endpoint'], -1) != '/') {
     $settings['endpoint'] .= '/';
   }
 
@@ -161,8 +182,19 @@ function u2f_val_password_render() {
 }
 
 
-function u2f_settings_section_callback() { 
-  echo 'The settings below are used to connect to and authenticate against the U2F validation server.';
+function u2f_settings_section_callback() {
+  $resp = json_decode(curl_send(''));
+  ?>
+  The settings below are used to connect to and authenticate against the U2F validation server.
+
+  <?php if(is_error($resp)): ?>
+  <div class="error">
+    Failed to connect to the validation server using the current settings!<br/>
+    <strong>Error: <?php echo $resp->{'errorMessage'}; ?>.</strong>
+  </div>
+  <?php endif; ?>
+
+  <?php
 }
 
 
@@ -195,6 +227,15 @@ function u2f_profile_fields($user) {
   if(empty($options)) return;
 
   $devices = json_decode(list_devices($user->ID));
+  if(is_error($devices)) {
+    ?>
+    <div id="u2f_invalid_settings_notice" class="error">
+      U2F validation server not reachable. Ensure your U2F settings are correct.<br/>
+      <strong>Error: <?php echo $devices->{'errorMessage'}; ?>.</strong>
+    </div>
+    <?php
+    return;
+  }
   ?>
   <h3>U2F Devices</h3>
   <table class="form-table">
@@ -221,7 +262,7 @@ function u2f_profile_fields($user) {
         <a id="u2f_register" href="#" class="button">Register a new U2F Device</a>
         <div id="u2f_touch_notice" style="display: none;">
           Touch the flashing button on your U2F device now.
-        </p>
+        </div>
       </td>
     </tr>
   </table>
@@ -297,7 +338,7 @@ $u2f_transient = null;
 
 function u2f_login($user) {
   $options = get_option('u2f_settings');
-  if(empty($options)) return $user;
+  if(empty($options['endpoint'])) return $user;
 
   if(wp_check_password($_POST['pwd'], $user->data->user_pass, $user->ID) && !isset($_POST['u2f'])) {
     $authData = auth_begin($user->ID);
@@ -326,7 +367,17 @@ function u2f_login($user) {
 
 function u2f_form() {
   global $u2f_transient;
-  if(!empty($u2f_transient)) {
+  $options = get_option('u2f_settings');
+
+  if(empty($options['endpoint'])) {
+    _log("No endpoint set!");
+    ?>
+<p>
+<strong>WARNING:</strong> The U2F plugin has not been configured, and is therefore disabled.
+</p>
+  <?php
+    return;
+  } else if(!empty($u2f_transient)) {
     ?>
 <script src="chrome-extension://pfboblefjcgdjicmnffhdgionmgcdmne/u2f-api.js"></script>
 <script>
