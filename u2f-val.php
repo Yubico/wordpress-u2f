@@ -2,22 +2,20 @@
 /**
 * Plugin Name: U2F Wordpress
 * Plugin URI: http://mypluginuri.com/
-* Description: A brief description about your plugin.
-* Version: 1.0 or whatever version of the plugin (pretty self explanatory)
-* Author: Plugin Author's Name
-* Author URI: Author's website
-* License: A "Slug" license name e.g. GPL12
+* Description: Enables U2F authentication for Wordpress.
+* Version: 0.1
+* Author: Yubico
+* Author URI: http://www.yubico.com
+* License: GPL12
 */
 
-define("BASE", "http://localhost/wsapi/u2fval/");
-define("CLIENT", "wp-u2f");
-define("PASS", "password");
-
 function curl_begin($url) {
-  $ch = curl_init($url);
+  $options = get_option('u2f_settings');
+
+  $ch = curl_init($options['endpoint'].$url);
   //curl_setopt($ch, CURLOPT_FAILONERROR, 1);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-  curl_setopt($ch, CURLOPT_USERPWD, CLIENT.":".PASS);
+  curl_setopt($ch, CURLOPT_USERPWD, $options['username'].':'.$options['password']);
   curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
   curl_setopt($ch, CURLOPT_TIMEOUT, 10);
   return $ch;
@@ -47,27 +45,27 @@ function curl_delete($url) {
 }
 
 function list_devices($username) {
-  return curl_send(BASE.$username."/");
+  return curl_send($username."/");
 }
 
 function register_begin($username) {
-  return curl_send(BASE.$username."/register");
+  return curl_send($username."/register");
 }
 
 function register_complete($username, $registerData) {
-  return curl_send(BASE.$username."/register", $registerData);
+  return curl_send($username."/register", $registerData);
 }
 
 function unregister($username, $handle) {
-  return curl_delete(BASE.$username."/".$handle);
+  return curl_delete($username."/".$handle);
 }
 
 function auth_begin($username) {
-  return curl_send(BASE.$username."/authenticate");
+  return curl_send($username."/authenticate");
 }
 
 function auth_complete($username, $authData) {
-  return curl_send(BASE.$username."/authenticate", $authData);
+  return curl_send($username."/authenticate", $authData);
 }
 
 function has_devices($authData) {
@@ -76,23 +74,127 @@ function has_devices($authData) {
 
 
 if(!function_exists('_log')){
-  function _log( $message ) {
-    if( WP_DEBUG === true ){
-      if( is_array( $message ) || is_object( $message ) ){
-        error_log( print_r( $message, true ) );
+  function _log($message ) {
+    if(WP_DEBUG === true ){
+      if(is_array($message ) || is_object($message ) ){
+        error_log(print_r($message, true ) );
       } else {
-        error_log( $message );
+        error_log($message );
       }
     }
   }
 }
 
 /*
- * MANAGEMENT
+ * ADMIN MANAGEMENT
+ */
+
+function u2f_add_admin_menu() { 
+  add_options_page('U2F', 'U2F', 'manage_options', 'u2f', 'u2f_options_page');
+}
+
+function sanitize_u2f_settings($settings) {
+  if(substr($settings['endpoint'], -1) != '/') {
+    $settings['endpoint'] .= '/';
+  }
+
+  return $settings;
+}
+
+function u2f_settings_init() { 
+  register_setting('pluginPage', 'u2f_settings', 'sanitize_u2f_settings');
+
+  add_settings_section(
+    'u2f_pluginPage_section', 
+    'U2F Validation Server API settings',
+    'u2f_settings_section_callback', 
+    'pluginPage'
+  );
+
+  add_settings_field(
+    'endpoint', 
+    'Endpoint',
+    'u2f_val_endpoint_render', 
+    'pluginPage', 
+    'u2f_pluginPage_section' 
+  );
+
+  add_settings_field(
+    'username', 
+    'Client ID',
+    'u2f_val_username_render', 
+    'pluginPage', 
+    'u2f_pluginPage_section' 
+  );
+
+  add_settings_field(
+    'password', 
+    'Client password',
+    'u2f_val_password_render', 
+    'pluginPage', 
+    'u2f_pluginPage_section' 
+  );
+}
+
+
+function u2f_val_endpoint_render() { 
+  $options = get_option('u2f_settings');
+?>
+  <input type='text' name='u2f_settings[endpoint]' value='<?php echo $options['endpoint']; ?>' class="regular-text code">
+<?php
+}
+
+
+function u2f_val_username_render() { 
+  $options = get_option('u2f_settings');
+?>
+  <input type='text' name='u2f_settings[username]' value='<?php echo $options['username']; ?>' class="regular-text">
+  <?php
+}
+
+
+function u2f_val_password_render() { 
+  $options = get_option('u2f_settings');
+  ?>
+  <input type='password' name='u2f_settings[password]' value='<?php echo $options['password']; ?>' class="regular-text">
+  <?php
+}
+
+
+function u2f_settings_section_callback() { 
+  echo 'The settings below are used to connect to and authenticate against the U2F validation server.';
+}
+
+
+function u2f_options_page() { 
+  ?>
+  <div class="wrap">
+  <h2>U2F Settings</h2>
+  <form action='options.php' method='post'>
+  
+  <?php
+  settings_fields('pluginPage');
+  do_settings_sections('pluginPage');
+  submit_button();
+  ?>
+  
+  </form>
+  </div>
+  <?php
+}
+
+add_action('admin_menu', 'u2f_add_admin_menu');
+add_action('admin_init', 'u2f_settings_init');
+
+/*
+ * USER MANAGEMENT
  */
 
 function u2f_profile_fields($user) {
-  $devices = json_decode(list_Devices($user->ID));
+  $options = get_option('u2f_settings');
+  if(empty($options)) return;
+
+  $devices = json_decode(list_devices($user->ID));
   ?>
   <h3>U2F Devices</h3>
   <table class="form-table">
@@ -194,6 +296,9 @@ add_action('personal_options_update', 'u2f_profile_save');
 $u2f_transient = null;
 
 function u2f_login($user) {
+  $options = get_option('u2f_settings');
+  if(empty($options)) return $user;
+
   if(wp_check_password($_POST['pwd'], $user->data->user_pass, $user->ID) && !isset($_POST['u2f'])) {
     $authData = auth_begin($user->ID);
     global $u2f_transient;
