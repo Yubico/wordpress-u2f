@@ -9,89 +9,7 @@
 * License: GPL12
 */
 
-function curl_begin($path) {
-  $options = get_option('u2f_settings');
-
-  $ch = curl_init($options['endpoint'].$path);
-  //curl_setopt($ch, CURLOPT_FAILONERROR, 1);
-  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-  curl_setopt($ch, CURLOPT_USERPWD, $options['username'].':'.$options['password']);
-  curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
-  curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-  return $ch;
-}
-
-function curl_complete($ch) {
-  $res = curl_exec($ch);
-  if($res === false) {
-    curl_close($ch);
-    return '{"errorCode": -1, "errorMessage": "Server unreachable"}';
-  }
-
-  $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-  curl_close($ch);
-  if($status >= 400) {
-    $res = '{"errorCode": '.$status.'';
-    if($status == 401) {
-      $res .= ', "errorMessage": "Invalid credentials"';
-    } else if($status == 404) {
-      $res .= ', "errorMessage": "Resource not found"';
-    }
-    $res .= '}';
-  }
-  return $res;
-}
-
-function curl_send($path, $data=null) {
-  $ch = curl_begin($path);
-  if($data) {
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-      'Content-Type: application/json',
-      'Content-Length: '.strlen($data))
-    );
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-  }
-  return curl_complete($ch);
-}
-
-function curl_delete($path) {
-  $ch = curl_begin($path);
-  curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "DELETE");
-  return curl_complete($ch);
-}
-
-function list_devices($username) {
-  return curl_send($username."/");
-}
-
-function register_begin($username) {
-  return curl_send($username."/register");
-}
-
-function register_complete($username, $registerData) {
-  return curl_send($username."/register", $registerData);
-}
-
-function unregister($username, $handle) {
-  return curl_delete($username."/".$handle);
-}
-
-function auth_begin($username) {
-  return curl_send($username."/authenticate");
-}
-
-function auth_complete($username, $authData) {
-  return curl_send($username."/authenticate", $authData);
-}
-
-function has_devices($authData) {
-  return sizeof(json_decode($authData)->{'authenticateRequests'}) > 0;
-}
-
-function is_error($data) {
-  return isset($data->{'errorCode'});
-}
+require('u2f-val-api.php');
 
 if(!function_exists('_log')){
   function _log($message ) {
@@ -104,6 +22,13 @@ if(!function_exists('_log')){
     }
   }
 }
+
+function init_u2f() {
+  $options = get_option('u2f_settings');
+  return new U2FVal($options['endpoint'], $options['username'], $options['password']);
+}
+
+$U2F = init_u2f();
 
 /*
  * ADMIN MANAGEMENT
@@ -182,18 +107,15 @@ function u2f_val_password_render() {
 
 
 function u2f_settings_section_callback() {
-  $resp = json_decode(curl_send(''));
-  if($resp === NULL || !isset($resp->{'trustedFacets'})) {
-    $resp->{'errorCode'} = 0;
-    $resp->{'errorMessage'} = 'Invalid response from server';
-  }
+  global $U2F;
+  $resp = $U2F->test_connection();
   ?>
   The settings below are used to connect to and authenticate against the U2F validation server.
 
   <?php if(is_error($resp)): ?>
   <div class="error">
     Failed to connect to the validation server using the current settings!<br/>
-    <strong>Error: <?php echo $resp->{'errorMessage'}; ?>.</strong>
+    <strong>Error: <?php echo $resp['errorMessage']; ?>.</strong>
   </div>
   <?php endif; ?>
 
@@ -226,15 +148,16 @@ add_action('admin_init', 'u2f_settings_init');
  */
 
 function u2f_profile_fields($user) {
+  global $U2F;
   $options = get_option('u2f_settings');
   if(empty($options)) return;
 
-  $devices = json_decode(list_devices($user->ID));
+  $devices = $U2F->list_devices($user->ID);
   if(is_error($devices)) {
     ?>
     <div id="u2f_invalid_settings_notice" class="error">
       U2F validation server not reachable. Ensure your U2F settings are correct.<br/>
-      <strong>Error: <?php echo $devices->{'errorMessage'}; ?>.</strong>
+      <strong>Error: <?php echo $devices['errorMessage']; ?>.</strong>
     </div>
     <?php
     return;
@@ -250,12 +173,16 @@ function u2f_profile_fields($user) {
         <?php foreach($devices as $device): ?>
         <tr>
         <td>
-          <label for="u2f_unregister_<?php echo $device->{'handle'}; ?>">
-            <?php echo $device->{'handle'}; ?>
+          <label for="u2f_unregister_<?php echo $device['handle']; ?>">
+            <?php
+            $props = $device['properties'];
+            $registered = new DateTime($props['created']);
+            echo 'Registered: '. $registered->format('Y-m-d');
+            ?>
           </label>
         </td>
         <td>
-          <input type="checkbox" name="u2f_unregister[]" id="u2f_unregister_<?php echo $device->{'handle'}; ?>" value="<?php echo $device->{'handle'}; ?>">
+          <input type="checkbox" name="u2f_unregister[]" id="u2f_unregister_<?php echo $device['handle']; ?>" value="<?php echo $device['handle']; ?>">
         </td>
         </tr>
         <?php endforeach; ?>
@@ -293,28 +220,26 @@ function u2f_profile_fields($user) {
 }
 
 function u2f_profile_save($user_id) {
+  global $U2F;
   if(!empty($_POST['u2f_register_response'])) {
-    $clientResponse = json_decode(stripslashes($_POST['u2f_register_response']));
-    $registerData = array(
-      'registerResponse' => $clientResponse
-    );
-
-    $res = register_complete($user_id, json_encode($registerData));
-    if(!isset($res->{'handle'})) {
+    $registerResponse = stripslashes($_POST['u2f_register_response']);
+    $res = $U2F->register_complete($user_id, $registerResponse);
+    if(!isset($res['handle'])) {
       return new WP_Error('u2f_registration_failed', 'There was an error registering the U2F device!');
     }
   } else if(isset($_POST['u2f_unregister'])) {
     $handles = $_POST['u2f_unregister'];
     foreach($handles as $handle) {
-      unregister($user_id, $handle);
+      $U2F->unregister($user_id, $handle);
     }
   }
 }
 
 function ajax_u2f_register_begin() {
+  global $U2F;
   $user = wp_get_current_user();
   if(is_user_logged_in()) {
-    echo register_begin($user->ID);
+    echo $U2F->register_begin($user->ID);
   }
   die();
 }
@@ -322,9 +247,9 @@ add_action('wp_ajax_u2f_register', 'ajax_u2f_register_begin');
 
 function validate_u2f_register(&$errors, $update=null, &$user=null) {
   if(isset($_POST['u2f_register_response'])) {
-    $data = json_decode(stripslashes($_POST['u2f_register_response']));
-    if(isset($data->{'errorCode'})) {
-      $errors->add('u2f_error', "<strong>ERROR</strong>: There was an error registering your U2F device (error code ".$data->{'errorCode'}.").");
+    $data = json_decode(stripslashes($_POST['u2f_register_response']), true);
+    if(isset($data['errorCode'])) {
+      $errors->add('u2f_error', "<strong>ERROR</strong>: There was an error registering your U2F device (error code ".$data['errorCode'].").");
     }
   }   
 }
@@ -340,14 +265,14 @@ add_action('personal_options_update', 'u2f_profile_save');
 $u2f_transient = null;
 
 function u2f_login($user) {
+  global $U2F;
   $options = get_option('u2f_settings');
   if(empty($options['endpoint'])) return $user;
 
   if(wp_check_password($_POST['pwd'], $user->data->user_pass, $user->ID) && !isset($_POST['u2f'])) {
-    $authData = auth_begin($user->ID);
-    $error = json_decode($authData);
-    if(is_error($error)) {
-      return new WP_Error('u2f_error_'.$error->{'errorCode'}, 'The U2F validation server is unreachable.');
+    $authData = $U2F->auth_begin($user->ID);
+    if(is_error($authData)) {
+      return new WP_Error('u2f_error_'.$authData['errorCode'], 'The U2F validation server is unreachable.');
     }
     global $u2f_transient;
     $u2f_transient = $authData;
@@ -355,16 +280,11 @@ function u2f_login($user) {
       return new WP_Error('authentication_failed', 'Touch your U2F device now.');
     }
   } else if(isset($_POST['u2f'])) {
-    $u2f = stripslashes($_POST['u2f']); //WordPress adds slashes, because it is insane.
-    $clientResponse = json_decode($u2f);
-    //TODO: Check for errors in clientResponse
-    $authData = array(
-      'authenticateResponse' => $clientResponse
-    );
-
-    $res = json_decode(auth_complete($user->ID, json_encode($authData)));
-    if(!isset($res->{'handle'})) {
-      _log($res);
+    $authenticateResponse = stripslashes($_POST['u2f']); //WordPress adds slashes, because it is insane.
+    //TODO: Check for errors in authenticateResponse
+    $properties = array('last-ip' => $_SERVER['REMOTE_ADDR']);
+    $res = $U2F->auth_complete($user->ID, $authenticateResponse, $properties);
+    if(!isset($res['handle'])) {
       return new WP_Error('authentication_failed', 'U2F authentication failed');
     }
   }
@@ -382,7 +302,7 @@ function u2f_form() {
 <p>
 <strong>WARNING:</strong> The U2F plugin has not been configured, and is therefore disabled.
 </p>
-  <?php
+    <?php
     return;
   } else if(!empty($u2f_transient)) {
     ?>
