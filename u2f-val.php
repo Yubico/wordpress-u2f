@@ -9,7 +9,7 @@
 * License: GPL12
 */
 
-require('u2f-val-api.php');
+require_once('vendor/autoload.php');
 
 if(!function_exists('_log')){
   function _log($message ) {
@@ -25,10 +25,10 @@ if(!function_exists('_log')){
 
 function init_u2f() {
   $options = get_option('u2f_settings');
-  return new U2FVal($options['endpoint'], $options['username'], $options['password']);
+  return new U2F($options['appId'], $options['attestDir']);
 }
 
-$U2F = init_u2f();
+$u2f = init_u2f();
 
 /*
  * ADMIN MANAGEMENT
@@ -39,10 +39,6 @@ function u2f_add_admin_menu() {
 }
 
 function sanitize_u2f_settings($settings) {
-  if(!empty($settings['endpoint']) && substr($settings['endpoint'], -1) != '/') {
-    $settings['endpoint'] .= '/';
-  }
-
   return $settings;
 }
 
@@ -51,75 +47,47 @@ function u2f_settings_init() {
 
   add_settings_section(
     'u2f_pluginPage_section', 
-    'U2F Validation Server API settings',
+    'U2F settings',
     'u2f_settings_section_callback', 
     'pluginPage'
   );
 
   add_settings_field(
-    'endpoint', 
-    'Endpoint',
-    'u2f_val_endpoint_render', 
+    'appId', 
+    'Applicate ID',
+    'u2f_appId_render', 
     'pluginPage', 
     'u2f_pluginPage_section' 
   );
 
   add_settings_field(
-    'username', 
-    'Client ID',
-    'u2f_val_username_render', 
-    'pluginPage', 
-    'u2f_pluginPage_section' 
-  );
-
-  add_settings_field(
-    'password', 
-    'Client password',
-    'u2f_val_password_render', 
+    'attestDir', 
+    'Attestation directory',
+    'u2f_attestDir_render', 
     'pluginPage', 
     'u2f_pluginPage_section' 
   );
 }
 
 
-function u2f_val_endpoint_render() { 
+function u2f_appId_render() { 
   $options = get_option('u2f_settings');
 ?>
-  <input type='text' name='u2f_settings[endpoint]' value='<?php echo $options['endpoint']; ?>' class="regular-text code">
+  <input type='text' name='u2f_settings[appId]' value='<?php echo $options['appId']; ?>' class="regular-text code">
 <?php
 }
 
 
-function u2f_val_username_render() { 
+function u2f_val_attestDir_render() { 
   $options = get_option('u2f_settings');
 ?>
-  <input type='text' name='u2f_settings[username]' value='<?php echo $options['username']; ?>' class="regular-text">
-  <?php
-}
-
-
-function u2f_val_password_render() { 
-  $options = get_option('u2f_settings');
-  ?>
-  <input type='password' name='u2f_settings[password]' value='<?php echo $options['password']; ?>' class="regular-text">
+  <input type='text' name='u2f_settings[attestDir]' value='<?php echo $options['attestDir']; ?>' class="regular-text">
   <?php
 }
 
 
 function u2f_settings_section_callback() {
-  global $U2F;
-  $resp = $U2F->test_connection();
-  ?>
-  The settings below are used to connect to and authenticate against the U2F validation server.
-
-  <?php if(is_error($resp)): ?>
-  <div class="error">
-    Failed to connect to the validation server using the current settings!<br/>
-    <strong>Error: <?php echo $resp['errorMessage']; ?>.</strong>
-  </div>
-  <?php endif; ?>
-
-  <?php
+  // TODO: validate settings?
 }
 
 
@@ -147,21 +115,17 @@ add_action('admin_init', 'u2f_settings_init');
  * USER MANAGEMENT
  */
 
+// TODO
+function u2f_get_registrations($user_id) {
+  return [];
+}
+
 function u2f_profile_fields($user) {
-  global $U2F;
+  global $u2f;
   $options = get_option('u2f_settings');
   if(empty($options)) return;
 
-  $devices = $U2F->list_devices($user->ID);
-  if(is_error($devices)) {
-    ?>
-    <div id="u2f_invalid_settings_notice" class="error">
-      U2F validation server not reachable. Ensure your U2F settings are correct.<br/>
-      <strong>Error: <?php echo $devices['errorMessage']; ?>.</strong>
-    </div>
-    <?php
-    return;
-  }
+  $devices = u2f_get_registrations($user->ID);
   ?>
   <h3>U2F Devices</h3>
   <table class="form-table">
@@ -206,7 +170,9 @@ function u2f_profile_fields($user) {
           'action': 'u2f_register'
         }, function(resp) {
           resp = JSON.parse(resp);
-          u2f.register(resp.registerRequests, resp.authenticateRequests, function(data) {
+          var req = resp[0];
+          var auth = resp[1];
+          u2f.register(req, auth, function(data) {
             $('#u2f_touch_notice').hide();
             $('#u2f_register_response').val(JSON.stringify(data));
             $('#submit').click();
@@ -220,14 +186,27 @@ function u2f_profile_fields($user) {
 }
 
 function u2f_profile_save($user_id) {
-  global $U2F;
+  global $u2f;
   if(!empty($_POST['u2f_register_response'])) {
-    $registerResponse = stripslashes($_POST['u2f_register_response']);
-    $res = $U2F->register_complete($user_id, $registerResponse);
-    if(!isset($res['handle'])) {
-      return new WP_Error('u2f_registration_failed', 'There was an error registering the U2F device!');
+    $req = get_user_option('u2f_user_regData', $user_id);
+    if(empty($req)) {
+      return new WP_Error('u2f_registration_failed', "There was no outstanding registration request for user $user_id");
     }
+    update_user_option('u2f_user_regData', '');
+    if($req->time < time() - 300) {
+      return new WP_Error('u2f_registration_failed', "The u2f registration request for $user_id expired before reply");
+    }
+    unset($req->time);
+    $registerResponse = $_POST['u2f_register_response'];
+    $registration = $u2f->doRegister($req, $registerResponse);
+    if(property_exists($registration, "errorCode")) {
+      return new WP_Error('u2f_registration_failed', 'There was an error registering the U2F device: ' . $registration->errorMessage);
+    }
+    $regs = u2f_get_registrations($user_id);
+    array_push($regs, $registration);
+    update_user_option($user_id, 'u2f_user_registrations', $regs);
   } else if(isset($_POST['u2f_unregister'])) {
+    // TODO: fix
     $handles = $_POST['u2f_unregister'];
     foreach($handles as $handle) {
       $U2F->unregister($user_id, $handle);
@@ -235,11 +214,22 @@ function u2f_profile_save($user_id) {
   }
 }
 
+function u2f_store_regData($user, $regData) {
+  $regData->time = time();
+  update_user_option($user->ID, 'u2f_user_regData', $regData);
+}
+
 function ajax_u2f_register_begin() {
-  global $U2F;
+  global $u2f;
   $user = wp_get_current_user();
   if(is_user_logged_in()) {
-    echo $U2F->register_begin($user->ID);
+    $regData = $u2f->getRegisterData(u2f_get_registrations($user->ID));
+    if(property_exists($regData, "errorCode")) {
+      $errors->add('u2f_error', "<strong>ERROR</strong>: There was an error obtaining U2F registration data: " . $data->errorMessage);
+    } else {
+      u2f_store_regData($user, $regData[0]);
+      echo json_encode($regData);
+    }
   }
   die();
 }
