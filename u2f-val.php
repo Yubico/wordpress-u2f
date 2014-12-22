@@ -25,7 +25,7 @@ if(!function_exists('_log')){
 
 function init_u2f() {
   $options = get_option('u2f_settings');
-  return new U2F($options['appId'], $options['attestDir']);
+  return new u2flib_server\U2F($options['appId']); //, $options['attestDir']);
 }
 
 $u2f = init_u2f();
@@ -54,7 +54,7 @@ function u2f_settings_init() {
 
   add_settings_field(
     'appId', 
-    'Applicate ID',
+    'Application ID',
     'u2f_appId_render', 
     'pluginPage', 
     'u2f_pluginPage_section' 
@@ -172,7 +172,7 @@ function u2f_profile_fields($user) {
           resp = JSON.parse(resp);
           var req = resp[0];
           var auth = resp[1];
-          u2f.register(req, auth, function(data) {
+          u2f.register([req], auth, function(data) {
             $('#u2f_touch_notice').hide();
             $('#u2f_register_response').val(JSON.stringify(data));
             $('#submit').click();
@@ -192,13 +192,16 @@ function u2f_profile_save($user_id) {
     if(empty($req)) {
       return new WP_Error('u2f_registration_failed', "There was no outstanding registration request for user $user_id");
     }
-    update_user_option('u2f_user_regData', '');
+    update_user_option($user_id, 'u2f_user_regData', '');
     if($req->time < time() - 300) {
       return new WP_Error('u2f_registration_failed', "The u2f registration request for $user_id expired before reply");
     }
     unset($req->time);
     $registerResponse = $_POST['u2f_register_response'];
-    $registration = $u2f->doRegister($req, $registerResponse);
+
+    //file_put_contents('php://stderr', print_r('json_error:' . json_last_error(), TRUE));
+
+    $registration = $u2f->doRegister($req, json_decode(stripslashes($registerResponse)));
     if(property_exists($registration, "errorCode")) {
       return new WP_Error('u2f_registration_failed', 'There was an error registering the U2F device: ' . $registration->errorMessage);
     }
@@ -223,13 +226,15 @@ function ajax_u2f_register_begin() {
   global $u2f;
   $user = wp_get_current_user();
   if(is_user_logged_in()) {
-    $regData = $u2f->getRegisterData(u2f_get_registrations($user->ID));
-    if(property_exists($regData, "errorCode")) {
+
+    try {
+      $regData = $u2f->getRegisterData(u2f_get_registrations($user->ID));
+    } catch( Exception $e ) {
       $errors->add('u2f_error', "<strong>ERROR</strong>: There was an error obtaining U2F registration data: " . $data->errorMessage);
-    } else {
-      u2f_store_regData($user, $regData[0]);
-      echo json_encode($regData);
     }
+
+    u2f_store_regData($user, $regData[0]);
+    echo json_encode($regData);
   }
   die();
 }
