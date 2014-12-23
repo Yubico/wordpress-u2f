@@ -115,7 +115,6 @@ add_action('admin_init', 'u2f_settings_init');
  * USER MANAGEMENT
  */
 
-// TODO
 function u2f_get_registrations($user_id) {
   $regs = get_user_option('u2f_user_registrations', $user_id);
   return $regs ? $regs : [];
@@ -200,8 +199,6 @@ function u2f_profile_save($user_id) {
     unset($req->time);
     $registerResponse = $_POST['u2f_register_response'];
 
-    //file_put_contents('php://stderr', print_r('json_error:' . json_last_error(), TRUE));
-
     $registration = $u2f->doRegister($req, json_decode(stripslashes($registerResponse)));
     if(property_exists($registration, "errorCode")) {
       return new WP_Error('u2f_registration_failed', 'There was an error registering the U2F device: ' . $registration->errorMessage);
@@ -210,11 +207,18 @@ function u2f_profile_save($user_id) {
     array_push($regs, $registration);
     update_user_option($user_id, 'u2f_user_registrations', $regs);
   } else if(isset($_POST['u2f_unregister'])) {
-    // TODO: fix
     $handles = $_POST['u2f_unregister'];
+    $regs = u2f_get_registrations($user_id);
+    //file_put_contents('php://stderr', print_r('regs:' . gettype($regs[0]) . '!!?', TRUE));
+
     foreach($handles as $handle) {
-      $U2F->unregister($user_id, $handle);
+      foreach($regs as $key => $reg) {
+        if($reg->keyHandle == $handle) {
+          unset($regs[$key]);
+        }
+      }
     }
+    update_user_option($user_id, 'u2f_user_registrations', $regs);
   }
 }
 
@@ -261,39 +265,48 @@ add_action('personal_options_update', 'u2f_profile_save');
 $u2f_transient = null;
 
 function u2f_login($user) {
-  global $U2F;
+  global $u2f;
   $options = get_option('u2f_settings');
-  if(empty($options['endpoint'])) return $user;
+
+  if(empty($options['appId'])) return $user;
 
   if(wp_check_password($_POST['pwd'], $user->data->user_pass, $user->ID) && !isset($_POST['u2f'])) {
-    $authData = $U2F->auth_begin($user->ID);
-    if(is_error($authData)) {
-      return new WP_Error('u2f_error_'.$authData['errorCode'], 'The U2F validation server is unreachable.');
-    }
+    $authData = $u2f->getAuthenticateData(u2f_get_registrations($user->ID));
+    //if(false) {
+    //  return new WP_Error('u2f_error_'.$authData['errorCode'], 'The U2F validation server is unreachable.');
+    //}
     global $u2f_transient;
     $u2f_transient = $authData;
+
+    update_user_option($user->ID, 'u2f_user_reqData', $authData);
+
     if(has_devices($authData)) {
       return new WP_Error('authentication_failed', 'Touch your U2F device now.');
     }
   } else if(isset($_POST['u2f'])) {
-    $authenticateResponse = stripslashes($_POST['u2f']); //WordPress adds slashes, because it is insane.
+    $authenticateResponse = stripslashes($_POST['u2f']);
     //TODO: Check for errors in authenticateResponse
-    $properties = array('last-ip' => $_SERVER['REMOTE_ADDR']);
-    $res = $U2F->auth_complete($user->ID, $authenticateResponse, $properties);
-    if(!isset($res['handle'])) {
-      return new WP_Error('authentication_failed', 'U2F authentication failed');
-    }
+    //$properties = array('last-ip' => $_SERVER['REMOTE_ADDR']);
+    $authRequest = get_user_option('u2f_user_reqData', $user->ID);
+
+    file_put_contents('php://stderr', print_r('$authenticateResponse:' . $authenticateResponse . '!!?', TRUE));
+
+    $u2f->doAuthenticate($authRequest, u2f_get_registrations($user->ID), json_decode($authenticateResponse));
   }
 
   return $user;
+}
+
+function has_devices($authData) {
+  return sizeof($authData > 0);
 }
 
 function u2f_form() {
   global $u2f_transient;
   $options = get_option('u2f_settings');
 
-  if(empty($options['endpoint'])) {
-    _log("No endpoint set!");
+  if(empty($options['appId'])) {
+    _log("No appId set!");
     ?>
 <p>
 <strong>WARNING:</strong> The U2F plugin has not been configured, and is therefore disabled.
@@ -304,7 +317,7 @@ function u2f_form() {
     ?>
 <script src="chrome-extension://pfboblefjcgdjicmnffhdgionmgcdmne/u2f-api.js"></script>
 <script>
-  var u2f_data = <?php echo $u2f_transient; ?>;
+  var u2f_data = <?php echo json_encode($u2f_transient); ?>;
   var form = document.getElementById('loginform');
   form.style.display = 'none';
 
@@ -319,7 +332,9 @@ function u2f_form() {
     <?php endforeach; ?>
   }, 0);
 
-  u2f.sign(u2f_data.authenticateRequests, function(resp) {
+  console.log("u2f_data: " + JSON.stringify(u2f_data));
+
+  u2f.sign(u2f_data, function(resp) {
     var u2f_f = document.createElement('input');
     u2f_f.name = 'u2f';
     u2f_f.type = 'hidden';
