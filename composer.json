@@ -1,0 +1,5 @@
+{
+    "require": {
+        "yubico/u2flib-server": "dev-master"
+    }
+}
