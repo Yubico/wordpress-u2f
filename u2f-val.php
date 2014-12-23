@@ -117,7 +117,8 @@ add_action('admin_init', 'u2f_settings_init');
 
 // TODO
 function u2f_get_registrations($user_id) {
-  return [];
+  $regs = get_user_option('u2f_user_registrations', $user_id);
+  return $regs ? $regs : [];
 }
 
 function u2f_profile_fields($user) {
@@ -137,16 +138,16 @@ function u2f_profile_fields($user) {
         <?php foreach($devices as $device): ?>
         <tr>
         <td>
-          <label for="u2f_unregister_<?php echo $device['handle']; ?>">
+          <label for="u2f_unregister_<?php echo $device->keyHandle; ?>">
             <?php
-            $props = $device['properties'];
-            $registered = new DateTime($props['created']);
-            echo 'Registered: '. $registered->format('Y-m-d');
+            //$props = $device['properties'];
+            //$registered = new DateTime($props['created']);
+            echo 'Registered: '; //. $registered->format('Y-m-d');
             ?>
           </label>
         </td>
         <td>
-          <input type="checkbox" name="u2f_unregister[]" id="u2f_unregister_<?php echo $device['handle']; ?>" value="<?php echo $device['handle']; ?>">
+          <input type="checkbox" name="u2f_unregister[]" id="u2f_unregister_<?php echo $device->keyHandle; ?>" value="<?php echo $device->keyHandle; ?>">
         </td>
         </tr>
         <?php endforeach; ?>
