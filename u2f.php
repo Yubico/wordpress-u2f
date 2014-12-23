@@ -60,6 +60,7 @@ function u2f_settings_init() {
     'u2f_pluginPage_section' 
   );
 
+  /*
   add_settings_field(
     'attestDir', 
     'Attestation directory',
@@ -67,6 +68,7 @@ function u2f_settings_init() {
     'pluginPage', 
     'u2f_pluginPage_section' 
   );
+  */
 }
 
 
@@ -284,14 +286,23 @@ function u2f_login($user) {
       return new WP_Error('authentication_failed', 'Touch your U2F device now.');
     }
   } else if(isset($_POST['u2f'])) {
-    $authenticateResponse = stripslashes($_POST['u2f']);
-    //TODO: Check for errors in authenticateResponse
+    $authenticateResponse = json_decode(stripslashes($_POST['u2f']));
+
+    file_put_contents('php://stderr', print_r('$authenticateResponse:' . stripslashes($_POST['u2f']) . '!!?', TRUE));
+
+    if(property_exists($authenticateResponse, 'errorCode')) {
+      switch($authenticateResponse->errorCode) {
+        case 5:
+          return new WP_Error('u2f_error', 'Authentication timed out. Please try again.');
+        default:
+          return new WP_Error('u2f_error', 'Client error.');
+      }
+    }
+
     //$properties = array('last-ip' => $_SERVER['REMOTE_ADDR']);
     $authRequest = get_user_option('u2f_user_reqData', $user->ID);
 
-    file_put_contents('php://stderr', print_r('$authenticateResponse:' . $authenticateResponse . '!!?', TRUE));
-
-    $u2f->doAuthenticate($authRequest, u2f_get_registrations($user->ID), json_decode($authenticateResponse));
+    $u2f->doAuthenticate($authRequest, u2f_get_registrations($user->ID), $authenticateResponse);
   }
 
   return $user;
