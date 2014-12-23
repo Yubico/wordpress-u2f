@@ -141,9 +141,9 @@ function u2f_profile_fields($user) {
         <td>
           <label for="u2f_unregister_<?php echo $device->keyHandle; ?>">
             <?php
-            //$props = $device['properties'];
-            //$registered = new DateTime($props['created']);
-            echo 'Registered: '; //. $registered->format('Y-m-d');
+            $registered = new DateTime();
+            $registered->setTimestamp($device->dateRegistered);
+            echo 'Registered: ' . $registered->format('Y-m-d');
             ?>
           </label>
         </td>
@@ -202,9 +202,9 @@ function u2f_profile_save($user_id) {
     $registerResponse = $_POST['u2f_register_response'];
 
     $registration = $u2f->doRegister($req, json_decode(stripslashes($registerResponse)));
-    if(property_exists($registration, "errorCode")) {
-      return new WP_Error('u2f_registration_failed', 'There was an error registering the U2F device: ' . $registration->errorMessage);
-    }
+    $now = new DateTime();
+    $registration->dateRegistered = $now->getTimeStamp();
+
     $regs = u2f_get_registrations($user_id);
     array_push($regs, $registration);
     update_user_option($user_id, 'u2f_user_registrations', $regs);
@@ -359,5 +359,6 @@ function u2f_form() {
 }
 
 add_action('login_form', 'u2f_form');
-add_filter('wp_authenticate_user', 'u2f_login')
+add_filter('wp_authenticate_user', 'u2f_login');
+
 ?>
