@@ -1,12 +1,12 @@
 <?php
 /**
 * Plugin Name: U2F Wordpress
-* Plugin URI: http://developers.yubico.com/
+* Plugin URI: http://developers.yubico.com/wordpress-u2f
 * Description: Enables U2F authentication for Wordpress.
-* Version: 0.1
+* Version: 0.2
 * Author: Yubico
 * Author URI: http://www.yubico.com
-* License: GPL12
+* License: GPLv2
 */
 
 require_once('vendor/autoload.php');
