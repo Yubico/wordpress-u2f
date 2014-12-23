@@ -1,14 +1,1 @@
-== U2F for Wordpress
-A plugin for Wordpress 4 that allows users to login using U2F devices.
-
-NOTE: This plugin is currently in beta.
-
-
-=== Usage
-
-==== Configuring
-After installing and activating the plugin, go to _Settings_ -> _U2F_.
-Set https://developers.yubico.com/U2F/App_ID.html[App ID] to the the base URL of your website, for example _https://mysite.wordpress.com_.
-
-==== Managing devices
-U2F devices can be added and removed from the profile screen (accessible by clicking on your name at the top of the screen).
+README
