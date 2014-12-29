@@ -292,6 +292,8 @@ function u2f_login($user) {
 
     if(property_exists($authenticateResponse, 'errorCode')) {
       switch($authenticateResponse->errorCode) {
+        case 4:
+          return new WP_Error('u2f_error', 'Device ineligible. Try another device.');
         case 5:
           return new WP_Error('u2f_error', 'Authentication timed out. Please try again.');
         default:
