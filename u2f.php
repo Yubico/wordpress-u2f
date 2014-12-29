@@ -330,6 +330,12 @@ function u2f_form() {
     ?>
 <script src="chrome-extension://pfboblefjcgdjicmnffhdgionmgcdmne/u2f-api.js"></script>
 <script>
+  window.onload = function() {
+    if(window.u2f === undefined) {
+      document.getElementById("login_error").innerHTML = "U2F login requires the <a href='https://chrome.google.com/webstore/detail/fido-u2f-universal-2nd-fa/pfboblefjcgdjicmnffhdgionmgcdmne'>Google U2F Extension for Chrome</a>!";
+    }
+  };
+
   var u2f_data = <?php echo json_encode($u2f_transient); ?>;
   var form = document.getElementById('loginform');
   form.style.display = 'none';
