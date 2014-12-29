@@ -11,7 +11,8 @@ The functionality is similar to the U2F (Security Key) support available for Goo
 
 === Installation
 
-. Upload `u2f.php` to the `/wp-content/plugins/` directory.
+. Install the dependencies using http://getcomposer.org[Composer].
+. Move the wordpress-u2f directory into the `/wp-content/plugins/` directory.
 . Activate the plugin through the 'Plugins' menu in WordPress.
 . Go to _Settings_ -> _U2F_.
 . Set https://developers.yubico.com/U2F/App_ID.html[App ID] to the the base URL of your website, for example _https://mysite.wordpress.com_.
