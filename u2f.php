@@ -1,8 +1,8 @@
 <?php
 /**
-* Plugin Name: U2F Wordpress
+* Plugin Name: U2F for WordPress
 * Plugin URI: http://developers.yubico.com/wordpress-u2f
-* Description: Enables U2F authentication for Wordpress.
+* Description: Enables U2F authentication for WordPress.
 * Version: 0.2
 * Author: Yubico
 * Author URI: http://www.yubico.com
@@ -211,7 +211,6 @@ function u2f_profile_save($user_id) {
   } else if(isset($_POST['u2f_unregister'])) {
     $handles = $_POST['u2f_unregister'];
     $regs = u2f_get_registrations($user_id);
-    //file_put_contents('php://stderr', print_r('regs:' . gettype($regs[0]) . '!!?', TRUE));
 
     foreach($handles as $handle) {
       foreach($regs as $key => $reg) {
@@ -273,7 +272,11 @@ function u2f_login($user) {
   if(empty($options['appId'])) return $user;
 
   if(wp_check_password($_POST['pwd'], $user->data->user_pass, $user->ID) && !isset($_POST['u2f'])) {
-    $authData = $u2f->getAuthenticateData(u2f_get_registrations($user->ID));
+    $registrations = u2f_get_registrations($user->ID);
+    if(!$registrations) {
+      return $user;
+    }
+    $authData = $u2f->getAuthenticateData($registrations);
     //if(false) {
     //  return new WP_Error('u2f_error_'.$authData['errorCode'], 'The U2F validation server is unreachable.');
     //}
@@ -287,8 +290,6 @@ function u2f_login($user) {
     }
   } else if(isset($_POST['u2f'])) {
     $authenticateResponse = json_decode(stripslashes($_POST['u2f']));
-
-    file_put_contents('php://stderr', print_r('$authenticateResponse:' . stripslashes($_POST['u2f']) . '!!?', TRUE));
 
     if(property_exists($authenticateResponse, 'errorCode')) {
       switch($authenticateResponse->errorCode) {
