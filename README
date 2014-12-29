@@ -1,14 +1,20 @@
 == U2F for Wordpress
-A plugin for Wordpress 4 that allows users to login using U2F devices.
+This plugin adds support for the two factor authentication standard U2F.
 
-NOTE: This plugin is currently in beta.
+The functionality is similar to the U2F (Security Key) support available for Go$
+
+* Users registers U2F devices themselves.
+* Users are not required to register devices.
+* A user can have multiple devices registered.
+* Currently, only Google Chrome is supported.
 
 
-=== Usage
+=== Installation
 
-==== Configuring
-After installing and activating the plugin, go to _Settings_ -> _U2F_.
-Set https://developers.yubico.com/U2F/App_ID.html[App ID] to the the base URL of your website, for example _https://mysite.wordpress.com_.
+. Upload `u2f.php` to the `/wp-content/plugins/` directory.
+. Activate the plugin through the 'Plugins' menu in WordPress.
+. Go to _Settings_ -> _U2F_.
+. Set https://developers.yubico.com/U2F/App_ID.html[App ID] to the the base URL of your website, for example _https://mysite.wordpress.com_.
 
-==== Managing devices
+=== Managing devices
 U2F devices can be added and removed from the profile screen (accessible by clicking on your name at the top of the screen).
