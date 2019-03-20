@@ -1,6 +1,6 @@
 == U2F for Wordpress
 
-NOTE: Development of this plugin has been (at least temporarily) discontinued since https://github.com/shield-9/u2f-login[a more complete plugin] has appeared.
+NOTE: This project is deprecated and is no longer being maintained.
 
 This plugin adds support for the two factor authentication standard U2F.
 
